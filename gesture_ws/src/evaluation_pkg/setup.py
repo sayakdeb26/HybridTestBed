@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'evaluation_node = evaluation_pkg.evaluation_node:main',
         ],
     },
 )

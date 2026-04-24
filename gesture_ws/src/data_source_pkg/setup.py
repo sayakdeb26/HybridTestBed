@@ -24,6 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'data_source_node = data_source_pkg.data_source_node:main',
+            'dataset_source_node = data_source_pkg.dataset_source_node:main',
         ],
     },
 )

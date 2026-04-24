@@ -9,43 +9,44 @@ class SequenceBufferNode(Node):
         super().__init__('sequence_buffer_node')
         self.subscription = self.create_subscription(
             Float32MultiArray,
-            '/gesture/features',
-            self.features_callback,
+            '/keypoints',
+            self.keypoints_callback,
             10)
-        self.publisher_ = self.create_publisher(Float32MultiArray, '/gesture/sequence', 10)
+        self.publisher_ = self.create_publisher(Float32MultiArray, '/sequence', 10)
         
         self.seq_len = 30
         self.buffer = deque(maxlen=self.seq_len)
         
-        # Indices for velocity calculation (24 dims total)
-        # Wrists (12-17), Index, Middle, Thumb tips (21-29, 39-47)
-        self.vel_indices = list(range(12, 18)) + list(range(21, 30)) + list(range(39, 48))
+        self.latest_features = None
         
-        self.get_logger().info('Sequence Buffer Node started (Publishing to /gesture/sequence)')
+        # Timer to enforce strict 30Hz sequence building
+        self.timer = self.create_timer(1.0 / 30.0, self.timer_callback)
+        
+        self.get_logger().info('Sequence Buffer Node started (Sub: /keypoints, Pub: /sequence)')
 
-    def features_callback(self, msg):
+    def keypoints_callback(self, msg):
         features = np.array(msg.data, dtype=np.float32)
-        if len(features) != 60:
-            self.get_logger().warning(f'Expected 60 features, got {len(features)}. Ignoring.', throttle_duration_sec=2.0)
+        if len(features) != 84:
+            self.get_logger().warning(f'Expected 84 features, got {len(features)}. Ignoring.', throttle_duration_sec=2.0)
             return
             
-        self.buffer.append(features)
+        self.latest_features = features
+
+    def timer_callback(self):
+        # 1. Warm-up phase: do nothing until we get our first valid frame
+        if self.latest_features is None:
+            return
+            
+        # 2. Frame drop fallback: we simply append `latest_features` again
+        # If the subscriber didn't receive a new message, latest_features remains unchanged.
+        self.buffer.append(self.latest_features)
         
-        # Only publish when the buffer is full (sliding window)
+        # 3. Publish sequence if buffer is full
         if len(self.buffer) == self.seq_len:
-            seq_features = np.array(self.buffer) # (30, 60)
+            seq_features = np.array(self.buffer, dtype=np.float32) # (30, 84)
             
-            # Calculate velocities
-            velocities = np.zeros((self.seq_len, 24), dtype=np.float32)
-            for t in range(1, self.seq_len):
-                velocities[t] = seq_features[t, self.vel_indices] - seq_features[t-1, self.vel_indices]
-                
-            # Concatenate to get (30, 84)
-            final_sequence = np.concatenate([seq_features, velocities], axis=1)
-            
-            # Publish flattened array
             out_msg = Float32MultiArray()
-            out_msg.data = final_sequence.flatten().tolist()
+            out_msg.data = seq_features.flatten().tolist()
             self.publisher_.publish(out_msg)
 
 def main(args=None):

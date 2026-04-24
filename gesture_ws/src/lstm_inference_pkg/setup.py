@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'lstm_inference_node = lstm_inference_pkg.lstm_inference_node:main',
         ],
     },
 )

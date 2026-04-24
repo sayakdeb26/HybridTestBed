@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'sequence_buffer_node = sequence_buffer_pkg.sequence_buffer_node:main',
         ],
     },
 )

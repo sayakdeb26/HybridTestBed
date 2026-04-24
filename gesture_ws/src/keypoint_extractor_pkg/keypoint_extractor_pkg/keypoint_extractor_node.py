@@ -12,10 +12,10 @@ class KeypointExtractorNode(Node):
         super().__init__('keypoint_extractor_node')
         self.subscription = self.create_subscription(
             Image,
-            '/camera/image_raw',
+            '/image',
             self.image_callback,
             10)
-        self.publisher_ = self.create_publisher(Float32MultiArray, '/gesture/features', 10)
+        self.publisher_ = self.create_publisher(Float32MultiArray, '/keypoints', 10)
         self.bridge = CvBridge()
         
         self.mp_holistic = mp.solutions.holistic
@@ -27,14 +27,29 @@ class KeypointExtractorNode(Node):
         self.pose_indices = [11, 12, 13, 14, 15, 16] # Shoulders, Elbows, Wrists
         self.hand_indices = [0, 4, 8, 12, 16, 20] # Wrist, Thumb, Index, Middle, Ring, Pinky
         
-        self.get_logger().info('Keypoint Extractor Node started (Publishing to /gesture/features)')
+        # Temporal buffers for missing keypoints and velocity
+        self.last_valid_kps = {
+            'pose': None,
+            'left': None,
+            'right': None
+        }
+        self.prev_base_features = None
+        self.vel_indices = list(range(12, 18)) + list(range(21, 30)) + list(range(39, 48))
+        
+        self.get_logger().info('Keypoint Extractor Node started (Sub: /image, Pub: /keypoints)')
 
     def extract_features(self, results):
         features = []
         
-        pose_kps = results.pose_landmarks.landmark if results.pose_landmarks else None
-        left_kps = results.left_hand_landmarks.landmark if results.left_hand_landmarks else None
-        right_kps = results.right_hand_landmarks.landmark if results.right_hand_landmarks else None
+        # Fallback to last valid if missing
+        pose_kps = results.pose_landmarks.landmark if results.pose_landmarks else self.last_valid_kps['pose']
+        left_kps = results.left_hand_landmarks.landmark if results.left_hand_landmarks else self.last_valid_kps['left']
+        right_kps = results.right_hand_landmarks.landmark if results.right_hand_landmarks else self.last_valid_kps['right']
+        
+        # Update buffers
+        if pose_kps: self.last_valid_kps['pose'] = pose_kps
+        if left_kps: self.last_valid_kps['left'] = left_kps
+        if right_kps: self.last_valid_kps['right'] = right_kps
 
         # 1. Setup origin (Shoulder midpoint)
         if pose_kps:
@@ -70,23 +85,29 @@ class KeypointExtractorNode(Node):
         else:
             features.extend([0.0] * 6)
 
-        return features
+        base_features = np.array(features, dtype=np.float32)
+        
+        # 5. Velocity (24 dims)
+        velocities = np.zeros(24, dtype=np.float32)
+        if self.prev_base_features is not None:
+            velocities = base_features[self.vel_indices] - self.prev_base_features[self.vel_indices]
+            
+        self.prev_base_features = base_features
+        
+        # 6. Final 84-dim vector
+        final_vector = np.concatenate([base_features, velocities])
+        return final_vector
 
     def image_callback(self, msg):
         try:
-            # Convert ROS Image to OpenCV image
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             image_rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
             
-            # Process with MediaPipe
             results = self.holistic.process(image_rgb)
-            
-            # Extract 60-dim features
             features = self.extract_features(results)
             
-            # Publish features
             feature_msg = Float32MultiArray()
-            feature_msg.data = [float(f) for f in features]
+            feature_msg.data = features.tolist()
             self.publisher_.publish(feature_msg)
             
         except Exception as e:
