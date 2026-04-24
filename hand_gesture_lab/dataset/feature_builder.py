@@ -48,12 +48,10 @@ class FeatureBuilder:
         else:
             features.extend([0.0] * 6)
             
-        # 5. Standardization
         feat_arr = np.array(features, dtype=np.float32)
-        mean = np.mean(feat_arr)
-        std = np.std(feat_arr)
-        if std > 1e-6:
-            feat_arr = (feat_arr - mean) / std
+        
+        # 5. Clamp features to prevent extreme noise
+        feat_arr = np.clip(feat_arr, -5.0, 5.0)
             
         return feat_arr
 

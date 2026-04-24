@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'keypoint_extractor_node = keypoint_extractor_pkg.keypoint_extractor_node:main',
         ],
     },
 )
