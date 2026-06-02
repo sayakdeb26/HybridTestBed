@@ -1,13 +1,14 @@
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray, String
+from std_msgs.msg import String
 import numpy as np
 import json
 import torch
 import sys
 import os
 import time
-from amr_interfaces.msg import UnknownGesture, ConfirmReply, Intent
+import csv
+from amr_interfaces.msg import UnknownGesture, ConfirmReply, Intent, InstrumentedSequence
 
 # Append path to load GestureLSTM
 sys.path.append('/home/sayak/HybridTestBed/hand_gesture_lab')
@@ -17,11 +18,19 @@ class LSTMInferenceNode(Node):
     def __init__(self):
         super().__init__('lstm_inference_node')
         self.subscription = self.create_subscription(
-            Float32MultiArray,
+            InstrumentedSequence,
             '/sequence',
             self.sequence_callback,
             10)
         self.publisher_ = self.create_publisher(String, '/gesture/prediction', 10)
+        
+        self.sub_meta = self.create_subscription(
+            String,
+            '/video_meta',
+            self.meta_callback,
+            10)
+        self.current_video_id = "unknown"
+        self.current_true_label = "unknown"
         
         # Force disable cuDNN to fix local mismatch (9.21.1 vs 9.19.0)
         torch.backends.cudnn.enabled = False
@@ -65,12 +74,48 @@ class LSTMInferenceNode(Node):
             self.paused = False
             self.get_logger().info(f"Resuming gesture recognition after VLM confirmation")
 
+    def meta_callback(self, msg):
+        try:
+            data = json.loads(msg.data)
+            self.current_video_id = data.get("video_id", "unknown")
+            self.current_true_label = data.get("label", "unknown")
+        except Exception as e:
+            self.get_logger().error(f"Error parsing meta: {e}")
+
+    def log_confidence(self, video_id, true_label, pred_label, confidence):
+        os.makedirs('/home/sayak/HybridTestBed/experiment_results/confidence', exist_ok=True)
+        csv_path = '/home/sayak/HybridTestBed/experiment_results/confidence/confidence_logs.csv'
+        header = ["video_id", "true_label", "predicted_label", "confidence", "correct"]
+        file_exists = os.path.exists(csv_path)
+        correct = 1 if true_label == pred_label else 0
+        with open(csv_path, 'a') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(header)
+            writer.writerow([video_id, true_label, pred_label, confidence, correct])
+
+    def log_escalation(self, true_label, lstm_pred, lstm_conf, escalation_flag, vlm_pred, final_pred, correctness):
+        os.makedirs('/home/sayak/HybridTestBed/experiment_results/escalation', exist_ok=True)
+        csv_path = '/home/sayak/HybridTestBed/experiment_results/escalation/hybrid_escalation_log.csv'
+        header = ["true_label", "lstm_prediction", "confidence", "escalation_flag", "vlm_prediction", "final_prediction", "correctness"]
+        file_exists = os.path.exists(csv_path)
+        with open(csv_path, 'a') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(header)
+            writer.writerow([true_label, lstm_pred, lstm_conf, escalation_flag, vlm_pred, final_pred, correctness])
+
     def sequence_callback(self, msg):
         data = np.array(msg.data, dtype=np.float32)
         if len(data) != 8880: # 30 * 296
             self.get_logger().warning(f'Expected 8880 elements (30x296), got {len(data)}. Ignoring.', throttle_duration_sec=2.0)
             return
             
+        t0 = msg.t0
+        t1 = msg.t1
+        t2 = msg.t2
+        t3 = self.get_clock().now().nanoseconds
+        
         sequence = data.reshape((1, 30, 296))
         
         with torch.no_grad():
@@ -99,14 +144,26 @@ class LSTMInferenceNode(Node):
                 self.pause_until_time = now + self.cooldown_known
                 self.get_logger().info(f"Detected {label_str} ({confidence:.2f}). Pausing for {self.cooldown_known}s")
                 
+                t6 = self.get_clock().now().nanoseconds
+                
                 msg_intent = Intent()
                 msg_intent.stamp = self.get_clock().now().to_msg()
                 msg_intent.session_id = f"lstm_{int(now)}"
                 msg_intent.label = label_str
                 msg_intent.confidence = confidence
                 msg_intent.source = "lstm"
-                msg_intent.latency_ms = 0
+                msg_intent.t0 = t0
+                msg_intent.t1 = t1
+                msg_intent.t2 = t2
+                msg_intent.t3 = t3
+                msg_intent.t4 = t3
+                msg_intent.t5 = t3
+                msg_intent.t6 = t6
+                msg_intent.latency_ms = int((t6 - t0) / 1000000) if t0 > 0 else 0
                 self.pub_intent.publish(msg_intent)
+                
+                # Log confidence directly
+                self.log_confidence(self.current_video_id, self.current_true_label, label_str, confidence)
             else:
                 label_str = "UNCERTAIN"
                 self.session_counter += 1
@@ -120,6 +177,13 @@ class LSTMInferenceNode(Node):
                 msg_unknown.confidence = confidence
                 msg_unknown.hint = ""
                 msg_unknown.source = "lstm"
+                msg_unknown.t0 = t0
+                msg_unknown.t1 = t1
+                msg_unknown.t2 = t2
+                msg_unknown.t3 = t3
+                msg_unknown.t4 = 0
+                msg_unknown.t5 = 0
+                msg_unknown.t6 = 0
                 self.pub_unknown.publish(msg_unknown)
                 
                 self.waiting_for_confirmation = True

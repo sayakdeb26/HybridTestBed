@@ -41,12 +41,16 @@ echo "9. ui_kiosk_node (UI interface)"
 ros2 run ui_kiosk_pkg ui_kiosk_node --ros-args --params-file /home/sayak/HybridTestBed/gesture_ws/src/ui_kiosk_pkg/config/kiosk_params.yaml > /tmp/ui_kiosk.log 2>&1 &
 P9=$!
 
-echo "10. evaluation_node (prints live predictions to your terminal!)"
+echo "10. resource_monitor.py (background resource logger)"
+python3 /home/sayak/HybridTestBed/resource_monitor.py > /tmp/resource_monitor.log 2>&1 &
+P10=$!
+
+echo "11. evaluation_node (prints live predictions to your terminal!)"
 echo "--------------------------------------------------------"
 echo "To stop the pipeline, press CTRL+C"
 echo "--------------------------------------------------------"
 ros2 run evaluation_pkg evaluation_node
 
 # Cleanup when evaluation_node exits (via CTRL+C)
-kill $P1 $P2 $P3 $P4 $P5 $P6 $P7 $P8 $P9
+kill $P1 $P2 $P3 $P4 $P5 $P6 $P7 $P8 $P9 $P10
 echo "Pipeline stopped."
