@@ -1,16 +1,16 @@
 # HybridTestBed: Real-Time Hand Gesture & ROS 2 Pipeline
 
-This repository contains a complete end-to-end framework for real-time hand gesture recognition and its integration into a ROS 2 autonomous robotics pipeline.
+This repository contains a complete end-to-end framework for real-time hand gesture recognition, continual learning integration, and its integration into a ROS 2 autonomous robotics pipeline.
 
 ## 📂 Repository Structure
 
 ### 1. [hand_gesture_lab/](./hand_gesture_lab/)
-The research and training environment for the gesture classification model.
-- **Goal**: Trains a high-accuracy 5-class gesture classifier.
-- **Model**: Bidirectional LSTM with temporal attention and logit smoothing.
-- **Features**: 191D vectors (Position, Velocity, Acceleration, Arm Extension).
+The research, training, and continual learning environment for the gesture classification model.
+- **Goal**: Trains a high-accuracy gesture classifier with continual learning capability.
+- **Continual Learning**: Implements Elastic Weight Consolidation (EWC) and Replay Buffer methodologies to prevent catastrophic forgetting.
 - **Key Scripts**:
   - `train.py`: Main training orchestration with advanced feature engineering.
+  - `train_continual.py`: Orchestrates continual learning training tasks (e.g. L-T1 -> L-T2 -> L-T3) and handles EWC state chaining.
   - `fix_dataset.py`: Temporal carry-forward imputation for missing keypoints.
   - `ab_test.py`: Fast diagnostic training and feature comparison.
 
@@ -19,29 +19,60 @@ The ROS 2 Humble workspace for live robot control and inference.
 - **Packages**:
   - `keypoint_extractor_pkg`: Uses MediaPipe to extract coordinates from `/image`.
   - `sequence_buffer_pkg`: Maintains a rolling 30-frame window of features.
-  - `lstm_inference_pkg`: Performs real-time classification and publishes `/prediction`.
-  - `data_source_pkg`: Handles real-time image acquisition.
+  - `lstm_inference_pkg`: Performs real-time classification, publishes `/prediction` and `/lstm/unknown` on low-confidence triggers.
+  - `data_source_pkg`: Handles real-time image acquisition and injects `T0` timestamp.
+  - `vlm_bridge_pkg`: Coordinates clip recording, calls the VLM service, and acts as the HITI (Human-in-the-Loop) state machine.
+  - `amr_interfaces`: Declares custom message types (`InstrumentedKeypoints`, `InstrumentedSequence`) for high-precision latency instrumentation.
 
-## 🚀 Key Technologies
-- **MediaPipe**: Hybrid Pose + Hands extraction for high-ROI stability.
-- **PyTorch**: Deep learning backend for Bi-LSTM sequence classification.
-- **ROS 2 Humble**: Message-passing and node orchestration.
-- **NVIDIA CUDA**: Accelerated inference and training on RTX 5070.
+### 3. Extra Utilities & Monitoring
+- `resource_monitor.py`: Background monitoring script tracking CPU, RAM, and GPU stats (VRAM, Power, Temperature) at 1s intervals.
+- `generate_confusion_matrices.py`: Auto-generates confusion matrices (CSV and PNG) for pure LSTM and Hybrid decisions.
+
+---
+
+## ⚡ Continual Learning Strategy & State Persistence
+To support sequential training across tasks (e.g. retraining on new gestures) without forgetting old ones, the pipeline implements a **Mixed Strategy**:
+- **EWC (Elastic Weight Consolidation)**: Calculates and registers the Fisher Information Matrix and optimal parameters ($\theta^*$) for old tasks to penalize changes to important weights.
+- **Replay Buffer**: Employs class-balanced prioritization for active gestures.
+- **Persistence**: All state is preserved across training executions inside `hand_gesture_lab/weights/cl_state.pth`.
+
+---
+
+## ⏱️ Custom Timing Instrumentation (T0-T6)
+To measure latency with nanosecond precision without Float32 conversion errors, the pipeline propagates timing parameters across ROS 2 nodes using custom `int64` timestamp fields:
+- `T0` (Dataset Input): Recorded inside the Camera Image Header stamp.
+- `T1` (Keypoint Extraction): Set in `keypoint_extractor_node`.
+- `T2` (Sequence Construction): Set in `sequence_buffer_node`.
+- `T3` (LSTM Prediction): Set in `lstm_inference_node`.
+- `T4` (VLM Escalation Trigger): Recorded in `bridge_node` right before the asynchronous VLM call.
+- `T5` (VLM Response): Recorded in `bridge_node` when the VLM client receives the result.
+- `T6` (Intent Logged): Recorded when the user action is logged (either post-confirmation or directly from LSTM).
+
+---
+
+## 📊 Logging & Outputs
+All experimental data is written to `/home/sayak/HybridTestBed/experiment_results/`:
+- **Confidence logs**: Saved to `experiment_results/confidence/confidence_logs.csv`.
+- **Escalation logs**: Saved to `experiment_results/escalation/hybrid_escalation_log.csv`.
+- **System Resource Metrics**: Saved to `experiment_results/resource_usage/resource_log.csv`.
+- **Confusion Matrices**: Generated dynamically into `experiment_results/confusion_matrices/`.
+
+---
 
 ## 🛠️ Getting Started
 
-### Training the Model
+### Training & Continual Retraining
 1. Navigate to `hand_gesture_lab/`.
 2. Ensure data is prepared in `data/processed/`.
-3. Run `python3 fix_dataset.py` to repair any corrupted/dropped frames.
-4. Run `python3 train.py` to train the 5-class motion model.
+3. Run `python3 train_continual.py` to initiate tasks retraining. EWC state and replay buffers will automatically load and save to `weights/cl_state.pth`.
 
-### Launching the ROS 2 Pipeline
-1. Source your ROS 2 environment.
+### Launching the ROS 2 Pipeline with Resource Monitor
+1. Source ROS 2 Humble environment: `source /opt/ros/humble/setup.bash`.
 2. Build the workspace: `colcon build`.
-3. Source the overlay: `source install/setup.bash`.
-4. Launch the pipeline (refer to package-specific launch files).
+3. Source the overlay: `source gesture_ws/install/setup.bash`.
+4. Run `./run_ros2_test.sh` to spin up all nodes, which also starts the background resource monitor automatically.
+5. To plot final metrics after stopping the pipeline, run `python3 generate_confusion_matrices.py`.
 
 ---
 **Maintained by Sayak Deb**  
-*Project Focused on: Gesture-Based Robot Control and Temporal Motion Analysis.*
+*Project Focused on: Continual Learning, Gesture-Based Robot Control, and Temporal Motion Analysis.*
