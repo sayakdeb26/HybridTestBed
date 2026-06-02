@@ -18,6 +18,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/TrainingExample.msg
   msg/TelemetryCommand.msg
   msg/VlmCallStart.msg
+  msg/InstrumentedKeypoints.msg
+  msg/InstrumentedSequence.msg
   DEPENDENCIES builtin_interfaces
 )
 

@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
+from amr_interfaces.msg import InstrumentedKeypoints, InstrumentedSequence
 import numpy as np
 from collections import deque
 
@@ -8,15 +9,17 @@ class SequenceBufferNode(Node):
     def __init__(self):
         super().__init__('sequence_buffer_node')
         self.subscription = self.create_subscription(
-            Float32MultiArray,
+            InstrumentedKeypoints,
             '/keypoints',
             self.keypoints_callback,
             10)
-        self.publisher_ = self.create_publisher(Float32MultiArray, '/sequence', 10)
+        self.publisher_ = self.create_publisher(InstrumentedSequence, '/sequence', 10)
         
         self.seq_len = 30
         self.buffer = deque(maxlen=self.seq_len)
         self.latest_features = None
+        self.latest_t0 = 0
+        self.latest_t1 = 0
         
         self.timer = self.create_timer(1.0 / 30.0, self.timer_callback)
         self.get_logger().info('Sequence Buffer Node started (Sub: /keypoints, Pub: /sequence)')
@@ -28,6 +31,8 @@ class SequenceBufferNode(Node):
             return
             
         self.latest_features = features
+        self.latest_t0 = msg.t0
+        self.latest_t1 = msg.t1
 
     def compute_advanced_features(self, raw_buffer):
         seq_features = []
@@ -105,8 +110,12 @@ class SequenceBufferNode(Node):
             raw_buffer = np.array(self.buffer, dtype=np.float32)
             seq_features = self.compute_advanced_features(raw_buffer) # (30, 296)
             
-            out_msg = Float32MultiArray()
+            t2 = self.get_clock().now().nanoseconds
+            out_msg = InstrumentedSequence()
             out_msg.data = seq_features.flatten().tolist()
+            out_msg.t0 = self.latest_t0
+            out_msg.t1 = self.latest_t1
+            out_msg.t2 = t2
             self.publisher_.publish(out_msg)
 
 def main(args=None):

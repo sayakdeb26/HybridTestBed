@@ -98,6 +98,7 @@ class DatasetSourceNode(Node):
             
             if frame is not None:
                 msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
+                msg.header.stamp = self.get_clock().now().to_msg()
                 self.image_pub.publish(msg)
             else:
                 self.get_logger().error(f'Failed to read frame: {frame_path}')

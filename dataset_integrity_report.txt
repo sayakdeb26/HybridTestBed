@@ -1,0 +1,17 @@
+Dataset Integrity Verification Report
+=======================================
+Train ∩ DS1 = Ø: True
+Train ∩ DS2 = Ø: True
+Train ∩ DS3 = Ø: True
+DS1 ∩ DS2 = Ø: True
+DS2 ∩ DS3 = Ø: True
+DS1 ∩ DS3 = Ø: True
+
+NO DUPLICATES FOUND. Integrity passed.
+
+Class Distribution Summary:
+   Split  Swipe Left  Swipe Right  Rolling Forward  Rolling Backward  Thumb Down  Stop Sign
+0  Train        1233         1211             1252              1200        1267       1275
+1    DS1         176          173              178               172         181        182
+2    DS2         176          173              179               172         181        182
+3    DS3         177          173              179               171         181        182

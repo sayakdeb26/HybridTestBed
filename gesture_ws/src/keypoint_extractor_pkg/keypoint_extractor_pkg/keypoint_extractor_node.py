@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32MultiArray
+from amr_interfaces.msg import InstrumentedKeypoints
 from cv_bridge import CvBridge
 import cv2
 import mediapipe as mp
@@ -15,7 +16,7 @@ class KeypointExtractorNode(Node):
             '/camera/image_raw',
             self.image_callback,
             10)
-        self.publisher_ = self.create_publisher(Float32MultiArray, '/keypoints', 10)
+        self.publisher_ = self.create_publisher(InstrumentedKeypoints, '/keypoints', 10)
         self.bridge = CvBridge()
         
         self.mp_holistic = mp.solutions.holistic
@@ -79,8 +80,13 @@ class KeypointExtractorNode(Node):
             results = self.holistic.process(image_rgb)
             features = self.extract_features(results)
             
-            feature_msg = Float32MultiArray()
+            t0 = msg.header.stamp.sec * 1000000000 + msg.header.stamp.nanosec
+            t1 = self.get_clock().now().nanoseconds
+            
+            feature_msg = InstrumentedKeypoints()
             feature_msg.data = features.tolist()
+            feature_msg.t0 = t0
+            feature_msg.t1 = t1
             self.publisher_.publish(feature_msg)
             
         except Exception as e:

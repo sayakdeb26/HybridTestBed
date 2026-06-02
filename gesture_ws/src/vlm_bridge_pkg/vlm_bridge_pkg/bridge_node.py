@@ -29,6 +29,8 @@ class BridgeNode(Node):
         self.clip_wait_start_time = 0.0
         self.confirm_wait_start_time = 0.0
         self.current_unknown_msg = None # Store the initial UnknownGesture
+        self.timestamp_cache = {}
+        self.vlm_predictions = {}
 
         # Store clip paths: (session_id, window_id) -> clip_path
         self.clip_map = {}
@@ -51,6 +53,13 @@ class BridgeNode(Node):
             '/ui/confirm_reply',
             self.reply_callback,
             10)
+        self.sub_meta = self.create_subscription(
+            String,
+            '/video_meta',
+            self.meta_callback,
+            10)
+        self.current_video_id = "unknown"
+        self.current_true_label = "unknown"
 
         # Publishers
         self.pub_confirm = self.create_publisher(ConfirmRequest, '/vlm/confirm_request', 10)
@@ -70,6 +79,41 @@ class BridgeNode(Node):
 
         self.get_logger().info('Bridge Node started')
 
+    def meta_callback(self, msg):
+        try:
+            data = json.loads(msg.data)
+            self.current_video_id = data.get("video_id", "unknown")
+            self.current_true_label = data.get("label", "unknown")
+        except Exception as e:
+            self.get_logger().error(f"Error parsing meta: {e}")
+
+    def log_confidence(self, video_id, true_label, pred_label, confidence):
+        import csv
+        import os
+        os.makedirs('/home/sayak/HybridTestBed/experiment_results/confidence', exist_ok=True)
+        csv_path = '/home/sayak/HybridTestBed/experiment_results/confidence/confidence_logs.csv'
+        header = ["video_id", "true_label", "predicted_label", "confidence", "correct"]
+        file_exists = os.path.exists(csv_path)
+        correct = 1 if true_label == pred_label else 0
+        with open(csv_path, 'a') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(header)
+            writer.writerow([video_id, true_label, pred_label, confidence, correct])
+
+    def log_escalation(self, true_label, lstm_pred, lstm_conf, escalation_flag, vlm_pred, final_pred, correctness):
+        import csv
+        import os
+        os.makedirs('/home/sayak/HybridTestBed/experiment_results/escalation', exist_ok=True)
+        csv_path = '/home/sayak/HybridTestBed/experiment_results/escalation/hybrid_escalation_log.csv'
+        header = ["true_label", "lstm_prediction", "confidence", "escalation_flag", "vlm_prediction", "final_prediction", "correctness"]
+        file_exists = os.path.exists(csv_path)
+        with open(csv_path, 'a') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(header)
+            writer.writerow([true_label, lstm_pred, lstm_conf, escalation_flag, vlm_pred, final_pred, correctness])
+
     def unknown_callback(self, msg):
         if self.current_session_id == "":
             # New session
@@ -79,6 +123,14 @@ class BridgeNode(Node):
             self.awaiting_clip = True
             self.clip_wait_start_time = time.time()
             self.get_logger().info(f"Starting new session {self.current_session_id}. Waiting for clip.")
+            self.timestamp_cache[msg.session_id] = {
+                't0': msg.t0,
+                't1': msg.t1,
+                't2': msg.t2,
+                't3': msg.t3,
+                't4': 0,
+                't5': 0
+            }
             
             # Publish RecorderRequest
             req = RecorderRequest()
@@ -134,6 +186,10 @@ class BridgeNode(Node):
         vlm_start_msg.clip_path = clip_path
         self.pub_vlm_start.publish(vlm_start_msg)
         
+        t4 = self.get_clock().now().nanoseconds
+        if self.current_session_id in self.timestamp_cache:
+            self.timestamp_cache[self.current_session_id]['t4'] = t4
+        
         try:
             future = self.cli_infer.call_async(req)
             future.add_done_callback(lambda f: self.vlm_response_callback(f, clip_path))
@@ -144,12 +200,16 @@ class BridgeNode(Node):
     def vlm_response_callback(self, future, clip_path):
         try:
             # Add timeout check
-            resp = future.result()
-            
+            t5 = self.get_clock().now().nanoseconds
+            if self.current_session_id in self.timestamp_cache:
+                self.timestamp_cache[self.current_session_id]['t5'] = t5
+                
             if not resp or resp.label == "ERROR":
                 self.get_logger().error(f"VLM returned error or empty response")
                 self.reset_session()
                 return
+                
+            self.vlm_predictions[self.current_session_id] = resp.label
                 
             self.get_logger().info(f"VLM Response: {resp.label}, {resp.confidence}")
             
@@ -174,6 +234,17 @@ class BridgeNode(Node):
 
     def reply_callback(self, msg):
         if self.awaiting_confirmation and msg.session_id == self.current_session_id:
+            t6 = self.get_clock().now().nanoseconds
+            t_dict = self.timestamp_cache.get(msg.session_id, {})
+            t0 = t_dict.get('t0', 0)
+            t1 = t_dict.get('t1', 0)
+            t2 = t_dict.get('t2', 0)
+            t3 = t_dict.get('t3', 0)
+            t4 = t_dict.get('t4', 0)
+            t5 = t_dict.get('t5', 0)
+            
+            vlm_pred = self.vlm_predictions.get(msg.session_id, "unknown")
+            
             if msg.approved and msg.final_label:
                 self.get_logger().info(f"Approved: {msg.final_label}")
                 
@@ -183,8 +254,15 @@ class BridgeNode(Node):
                 intent.session_id = msg.session_id
                 intent.label = msg.final_label
                 intent.confidence = 1.0 # User approved
-                intent.latency_ms = 0 # TODO: calc latency
                 intent.source = "ui+vlm"
+                intent.t0 = t0
+                intent.t1 = t1
+                intent.t2 = t2
+                intent.t3 = t3
+                intent.t4 = t4
+                intent.t5 = t5
+                intent.t6 = t6
+                intent.latency_ms = int((t6 - t0) / 1000000) if t0 > 0 else 0
                 self.pub_intent.publish(intent)
                 
                 # Publish TrainingExample
@@ -199,8 +277,18 @@ class BridgeNode(Node):
                 te.confidence = 1.0
                 te.source = "ui+vlm"
                 self.pub_training.publish(te)
+                
+                # Log confidence and escalation
+                self.log_confidence(self.current_video_id, self.current_true_label, msg.final_label, 1.0)
+                self.log_escalation(self.current_true_label, self.current_unknown_msg.label, self.current_unknown_msg.confidence, 1, vlm_pred, msg.final_label, 1 if self.current_true_label == msg.final_label else 0)
             else:
                 self.get_logger().info("Rejected by operator")
+                self.log_confidence(self.current_video_id, self.current_true_label, "REJECTED", 0.0)
+                self.log_escalation(self.current_true_label, self.current_unknown_msg.label, self.current_unknown_msg.confidence, 1, vlm_pred, "REJECTED", 0)
+            
+            # Clean up cache
+            self.timestamp_cache.pop(msg.session_id, None)
+            self.vlm_predictions.pop(msg.session_id, None)
             
             self.current_session_id = "" # Clear to prevent double negative ConfirmReply
             self.reset_session()
@@ -215,7 +303,7 @@ class BridgeNode(Node):
                      self.get_logger().info(f"Using default clip: {self.default_clip}")
                      self.process_vlm(self.default_clip)
                 else:
-                    self.reset_session()
+                     self.reset_session()
         
         if self.awaiting_confirmation:
             if now - self.confirm_wait_start_time > self.confirm_timeout_s:
@@ -230,6 +318,15 @@ class BridgeNode(Node):
             reply.final_label = ""
             self.pub_reply.publish(reply)
             self.get_logger().info(f"Published fallback negative ConfirmReply for session {self.current_session_id}")
+            
+            # Log escalation timeout/rejection
+            vlm_pred = self.vlm_predictions.get(self.current_session_id, "unknown")
+            self.log_confidence(self.current_video_id, self.current_true_label, "TIMEOUT", 0.0)
+            if self.current_unknown_msg:
+                self.log_escalation(self.current_true_label, self.current_unknown_msg.label, self.current_unknown_msg.confidence, 1, vlm_pred, "TIMEOUT", 0)
+            
+            self.timestamp_cache.pop(self.current_session_id, None)
+            self.vlm_predictions.pop(self.current_session_id, None)
             
         self.current_session_id = ""
         self.current_window_id = -1

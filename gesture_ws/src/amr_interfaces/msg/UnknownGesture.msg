@@ -1,7 +1,14 @@
 builtin_interfaces/Time stamp
-string session_id        # unique ID for this gesture session (generated at LSTM)
-int32  window_id         # ID of the LSTM window that produced this event
-string label             # best-guess label from LSTM, e.g. UNKNOWN or a class name
-float32 confidence       # LSTM probability for that label
-string hint              # optional textual hint, may be empty
-string source            # e.g. "lstm"
+string session_id
+int32  window_id
+string label
+float32 confidence
+string hint
+string source
+int64 t0
+int64 t1
+int64 t2
+int64 t3
+int64 t4
+int64 t5
+int64 t6

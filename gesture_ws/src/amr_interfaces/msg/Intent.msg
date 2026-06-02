@@ -1,6 +1,13 @@
 builtin_interfaces/Time stamp
-string session_id        # new unique ID for each gesture event (from LSTM)
+string session_id
 string label
 float32 confidence
 int32  latency_ms
-string source            # e.g. "lstm", "ui+vlm"
+string source
+int64 t0
+int64 t1
+int64 t2
+int64 t3
+int64 t4
+int64 t5
+int64 t6
