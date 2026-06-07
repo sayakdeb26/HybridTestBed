@@ -370,20 +370,22 @@ def main():
         use_fast=False
     )
 
-    # ── Tier 1: fp16 — GPU-priority (fits everything possible on GPU first) ─────
-    print("Tier 1: fp16 GPU-priority load (device_map=auto, no max_memory cap)...")
+    # ── Tier 1: bfloat16 — GPU-priority (fits everything possible on GPU first) ──
+    # NOTE: Must use bfloat16 — the LoRA adapter weights are stored in bfloat16;
+    #       loading base model in float16 causes BFloat16 != Half matmul crash.
+    print("Tier 1: bfloat16 GPU-priority load (device_map=auto, no max_memory cap)...")
     try:
         model = AutoModel.from_pretrained(
             MODEL_ID,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,
             device_map="auto",
             trust_remote_code=True,
         )
         load_success = True
-        load_mode_used = "fp16 GPU-priority (device_map=auto)"
+        load_mode_used = "bfloat16 GPU-priority (device_map=auto)"
         if hasattr(model, "hf_device_map"):
             device_map_info = str(model.hf_device_map)
-        print("Tier 1: fp16 GPU-priority load SUCCESS.")
+        print("Tier 1: bfloat16 GPU-priority load SUCCESS.")
     except torch.cuda.OutOfMemoryError:
         load_error = traceback.format_exc()
         print(f"Tier 1 OOM — falling through to Tier 2.\n{load_error}")
@@ -393,22 +395,22 @@ def main():
 
     # ── Tier 2: fp16 — explicit 60% GPU / 40% CPU max_memory split ──────────────
     if not load_success:
-        print("Tier 2: fp16 with explicit 60/40 GPU/CPU max_memory split...")
+        print("Tier 2: bfloat16 with explicit 60/40 GPU/CPU max_memory split...")
         # 8 GB GPU: 60% usable ≈ 4915 MiB; reserve ~600 MiB headroom → 4300 MiB GPU
         max_memory = {0: "4300MiB", "cpu": "24000MiB"}
         try:
             model = AutoModel.from_pretrained(
                 MODEL_ID,
-                torch_dtype=torch.float16,
+                torch_dtype=torch.bfloat16,
                 device_map="auto",
                 max_memory=max_memory,
                 trust_remote_code=True,
             )
             load_success = True
-            load_mode_used = "fp16 (60% GPU / 40% CPU split)"
+            load_mode_used = "bfloat16 (60% GPU / 40% CPU split)"
             if hasattr(model, "hf_device_map"):
                 device_map_info = str(model.hf_device_map)
-            print("Tier 2: fp16 60/40 split load SUCCESS.")
+            print("Tier 2: bfloat16 60/40 split load SUCCESS.")
         except Exception as e:
             load_error = traceback.format_exc()
             print(f"Tier 2 FAILED:\n{load_error}")
