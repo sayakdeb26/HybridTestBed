@@ -120,6 +120,36 @@ def _patch_internlm2_causal_mask(model):
                 except Exception:
                     pass
     causal_lm.prepare_inputs_for_generation = types.MethodType(safe_prep, causal_lm)
+
+    # 3. Patch InternVideo2 ViT Attention._naive_attn to use PyTorch's native memory-efficient scaled_dot_product_attention
+    import sys
+    vit_module = None
+    for name, module in list(sys.modules.items()):
+        if "modeling_internvideo2_vit" in name:
+            vit_module = module
+            break
+    if vit_module is not None:
+        def patched_naive_attn(self, x):
+            B, N, C = x.shape
+            qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            q, k, v = qkv.unbind(0)
+            
+            if self.qk_normalization:
+                B_, H_, N_, D_ = q.shape
+                q = self.q_norm(q.transpose(1, 2).flatten(-2, -1)).view(B_, N_, H_, D_).transpose(1, 2)
+                k = self.k_norm(k.transpose(1, 2).flatten(-2, -1)).view(B_, N_, H_, D_).transpose(1, 2)
+            
+            x_attn = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, attn_mask=None, dropout_p=self.attn_drop.p if self.training else 0.0, is_causal=False, scale=self.scale
+            )
+            x_attn = x_attn.transpose(1, 2).reshape(B, N, C)
+            x_attn = self.proj(x_attn)
+            x_attn = self.proj_drop(x_attn)
+            return x_attn
+            
+        vit_module.Attention._naive_attn = patched_naive_attn
+        print("Patched InternVideo2 ViT Attention with memory-efficient PyTorch SDPA.")
+
     print("Patched InternLM2 model components (causal mask + inputs_embeds prep) for compatibility.")
 
 
