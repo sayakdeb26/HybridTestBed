@@ -60,7 +60,34 @@ def patched_init_missing(self, missing_keys, is_quantized=False):
     return orig_init_missing(self, filtered, is_quantized)
 transformers.PreTrainedModel._initialize_missing_keys = patched_init_missing
 
-# Config
+def _patch_internlm2_causal_mask(model):
+    """
+    Monkey-patch InternLM2Model._update_causal_mask to guard against:
+    - sequence_length == 0 (empty input on 2nd+ generation step with use_cache=False)
+    - empty cache_position tensor (size 0) causing broadcast mismatch
+    This is a compatibility fix for newer transformers versions vs InternLM2.5's cached model code.
+    """
+    import types
+    try:
+        internlm_model = model.lm.base_model.model.model  # PEFT LoRA wrapped
+    except AttributeError:
+        try:
+            internlm_model = model.lm.model
+        except AttributeError:
+            return
+
+    orig_update = internlm_model._update_causal_mask.__func__
+
+    def safe_update_causal_mask(self, attention_mask, input_tensor, cache_position, past_key_values, output_attentions):
+        # Guard: if sequence_length is 0 or cache_position is empty, return None (no mask needed)
+        if input_tensor.shape[1] == 0 or (cache_position is not None and cache_position.numel() == 0):
+            return None
+        return orig_update(self, attention_mask, input_tensor, cache_position, past_key_values, output_attentions)
+
+    internlm_model._update_causal_mask = types.MethodType(safe_update_causal_mask, internlm_model)
+    print("Patched InternLM2Model._update_causal_mask for empty cache_position safety.")
+
+
 WORKSPACE_DIR = "/home/sayak/HyRes"
 MANIFEST_PATH = os.path.join(WORKSPACE_DIR, "dataset_manifest_phase1.csv")
 RESULTS_DIR = os.path.join(WORKSPACE_DIR, "experiment_results/internvideo2_smoke")
@@ -430,6 +457,9 @@ def main():
     if not load_success:
         print("All loading tiers failed. Exiting.")
         sys.exit(1)
+
+    # Apply causal mask patch for InternLM2.5 compatibility
+    _patch_internlm2_causal_mask(model)
 
     # ── Inference probe: run one dummy forward to confirm model is not frozen ────
     print("Running inference probe (1 sample) to confirm model is responsive...")
