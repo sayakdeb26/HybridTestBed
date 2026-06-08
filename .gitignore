@@ -11,3 +11,8 @@ __pycache__/
 workspace/
 DataSet_Full/
 *.zip
+
+# ROS 2 Build Artifacts
+gesture_ws/build/
+gesture_ws/install/
+gesture_ws/log/

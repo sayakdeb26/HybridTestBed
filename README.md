@@ -82,6 +82,37 @@ The **Phase 1 LSTM Continual Learning experiment** has been successfully execute
 
 ---
 
+## 🤖 Phase 2: VLM Migration, Temporal Sampling & Production Replay Benchmarks
+
+To address LSTM prediction uncertainty under live conditions, a hybrid decision loop was developed to escalate low-confidence sequences to Vision-Language Models (VLMs). Multiple advanced VLM architectures were integrated and benchmarking pipelines established:
+
+### 1. VLM Models Integrated
+*   **Qwen3-VL (4B & 8B)**: Implements closed-set temporal reasoning over frame sequences, verified using robust preflight validation paths.
+*   **Video-LLaMA 3 (7B)**: Implements specialized video-language comprehension, demonstrating strong zero-shot classification on gesture actions.
+*   **InternVideo2-Chat-8B**: Leverages a hybrid encoder-decoder architecture. Optimizations include:
+    *   **PyTorch Native SDPA Patching**: Replaces naive attention layers with Scaled Dot-Product Attention for optimal memory efficiency.
+    *   **Offloading & Memory Fallback Policy**: Auto-configured memory routing with dynamic GPU priority allocation and CPU fallback (60/40 split) to handle high VRAM consumption.
+    *   **DynamicCache Compatibility**: Bypasses Cache size constraints to ensure seamless generation.
+
+### 2. Temporal Frame Sampling Strategy Comparison
+Evaluated gesture recognition performance using two frame extraction strategies across validation subsets:
+*   **Uniform Sampling (`UNIFORM_20`)**: Selects 20 evenly distributed frames.
+*   **Median-Centered Window (`MEDIAN_WINDOW_21`)**: Focuses on a 21-frame window centered on the peak of the gesture action.
+*   *Verdict*: The Median-Centered Window significantly improves VLM classification accuracy, precision, and recall by isolating the high-action motion segments.
+
+### 3. Production Replay Mode Benchmark (`PRODUCTION_REPLAY_MODE`)
+Simulates live ROS 2 system conditions by executing:
+1.  **Window Extraction**: Extracts a 5-frame event window from a rolling buffer around a detected gesture.
+2.  **MP4 Generation**: Transcodes frames into standard MP4 format dynamically.
+3.  **Cross-Model Benchmarking**: Feeds clips to FastVLM, Qwen3-VL, and Video-LLaMA3 to compare classification accuracy, latency, and resource footprint.
+
+All Phase 2 reports are categorized inside `experiment_results/`:
+*   `experiment_results/videollama3_smoke/`: Classification metrics, resources, latency, and video ingestion logs for Video-LLaMA 3.
+*   `experiment_results/sampling_comparison/`: Comparison reports and prediction datasets between Uniform and Median-Centered sampling.
+*   `experiment_results/replay_mode/`: Production replay metrics, confusion matrices, and the exported MP4 video clips.
+
+---
+
 ## 🛠️ Getting Started
 
 ### Training & Continual Retraining
@@ -95,6 +126,30 @@ The **Phase 1 LSTM Continual Learning experiment** has been successfully execute
 3. Source the overlay: `source gesture_ws/install/setup.bash`.
 4. Run `./run_ros2_test.sh` to spin up all nodes, which also starts the background resource monitor automatically.
 5. To plot final metrics after stopping the pipeline, run `python3 generate_confusion_matrices.py`.
+
+### VLM Preflight, Smoke Tests & Benchmarks
+To execute Phase 2 validation and benchmarking runs:
+1.  **Run Qwen3-VL Preflight & Smoke Test**:
+    ```bash
+    python3 run_qwen3_vl_preflight.py
+    python3 run_qwen3_vl_smoke_test.py
+    ```
+2.  **Run Video-LLaMA 3 Smoke Test**:
+    ```bash
+    python3 run_videollama3_smoke_test.py
+    ```
+3.  **Run InternVideo2-Chat-8B Smoke Test**:
+    ```bash
+    python3 run_internvideo2_smoke_test.py
+    ```
+4.  **Run Temporal Sampling Strategy Comparison**:
+    ```bash
+    python3 run_sampling_comparison.py
+    ```
+5.  **Run Production Replay Mode Benchmark**:
+    ```bash
+    python3 run_replay_mode_benchmark.py
+    ```
 
 ---
 **Maintained by Sayak Deb**  
